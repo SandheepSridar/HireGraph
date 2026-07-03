@@ -1,0 +1,6 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "my_agent": "./main.py:parallel_workflow"
+  }
+}

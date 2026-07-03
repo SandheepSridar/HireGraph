@@ -1,120 +1,86 @@
-def main():
-    # Step 1: Define tools and model
+import os
+import getpass
 
-    from langchain.tools import tool
-    from langchain.chat_models import init_chat_model
+from langchain_openai import ChatOpenAI
 
+def _set_env(var: str):
+    if not os.environ.get(var):
+        os.environ[var] = getpass.getpass(f"{var}: ")
 
-    model = init_chat_model(
-        model="openai/gpt-oss-20b",
-        model_provider="openai",
-        base_url="http://10.0.0.60:1234/v1",
-        temperature=0,
-        api_key="sk-local"
-    )
-
-
-    # Define tools
-    @tool
-    def multiply(a: int, b: int) -> int:
-        """Multiply `a` and `b`.
-
-        Args:
-            a: First int
-            b: Second int
-        """
-        return a * b
-
-
-    @tool
-    def add(a: int, b: int) -> int:
-        """Adds `a` and `b`.
-
-        Args:
-            a: First int
-            b: Second int
-        """
-        return a + b
-
-
-    @tool
-    def divide(a: int, b: int) -> float:
-        """Divide `a` and `b`.
-
-        Args:
-            a: First int
-            b: Second int
-        """
-        return a / b
-
-
-    # Augment the LLM with tools
-    tools = [add, multiply, divide]
-    tools_by_name = {tool.name: tool for tool in tools}
-    model_with_tools = model.bind_tools(tools)
-
-    from langgraph.graph import add_messages
-    from langchain.messages import (
-        SystemMessage,
-        HumanMessage,
-        ToolCall,
-    )
-    from langchain_core.messages import BaseMessage
-    from langgraph.func import entrypoint, task
-
-
-    # Step 2: Define model node
-
-    @task
-    def call_llm(messages: list[BaseMessage]):
-        """LLM decides whether to call a tool or not"""
-        return model_with_tools.invoke(
-            [
-                SystemMessage(
-                    content="You are a helpful assistant tasked with performing arithmetic on a set of inputs."
+llm = ChatOpenAI(model="openai/gpt-oss-20b",
+                base_url="http://10.0.0.60:1234/v1",
+                temperature=0,
+                api_key="sk-local"
                 )
-            ]
-            + messages
-        )
+
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END
+from IPython.display import Image, display
 
 
-    # Step 3: Define tool node
-
-    @task
-    def call_tool(tool_call: ToolCall):
-        """Performs the tool call"""
-        tool = tools_by_name[tool_call["name"]]
-        return tool.invoke(tool_call)
-
-
-    # Step 4: Define agent
-
-    @entrypoint()
-    def agent(messages: list[BaseMessage]):
-        model_response = call_llm(messages).result()
-
-        while True:
-            if not model_response.tool_calls:
-                break
-
-            # Execute tools
-            tool_result_futures = [
-                call_tool(tool_call) for tool_call in model_response.tool_calls
-            ]
-            tool_results = [fut.result() for fut in tool_result_futures]
-            messages = add_messages(messages, [model_response, *tool_results])
-            model_response = call_llm(messages).result()
-
-        messages = add_messages(messages, model_response)
-        return messages
-
-    # Invoke
-    messages = [HumanMessage(content="Add 3 and 4.")]
-    stream = agent.stream_events(messages, version="v3")
-    for snapshot in stream.values:
-        print(snapshot)
-        print("\n")
+# Graph state
+class State(TypedDict):
+    topic: str
+    joke: str
+    story: str
+    poem: str
+    combined_output: str
 
 
-if __name__ == "__main__":
-    main()
+# Nodes
+def call_llm_1(state: State):
+    """First LLM call to generate initial joke"""
+
+    msg = llm.invoke(f"Write a joke about {state['topic']}")
+    return {"joke": msg.content}
+
+
+def call_llm_2(state: State):
+    """Second LLM call to generate story"""
+
+    msg = llm.invoke(f"Write a story about {state['topic']}")
+    return {"story": msg.content}
+
+
+def call_llm_3(state: State):
+    """Third LLM call to generate poem"""
+
+    msg = llm.invoke(f"Write a poem about {state['topic']}")
+    return {"poem": msg.content}
+
+
+def aggregator(state: State):
+    """Combine the joke, story and poem into a single output"""
+
+    combined = f"Here's a story, joke, and poem about {state['topic']}!\n\n"
+    combined += f"STORY:\n{state['story']}\n\n"
+    combined += f"JOKE:\n{state['joke']}\n\n"
+    combined += f"POEM:\n{state['poem']}"
+    return {"combined_output": combined}
+
+
+# Build workflow
+parallel_builder = StateGraph(State)
+
+# Add nodes
+parallel_builder.add_node("call_llm_1", call_llm_1)
+parallel_builder.add_node("call_llm_2", call_llm_2)
+parallel_builder.add_node("call_llm_3", call_llm_3)
+parallel_builder.add_node("aggregator", aggregator)
+
+# Add edges to connect nodes
+parallel_builder.add_edge(START, "call_llm_1")
+parallel_builder.add_edge(START, "call_llm_2")
+parallel_builder.add_edge(START, "call_llm_3")
+parallel_builder.add_edge("call_llm_1", "aggregator")
+parallel_builder.add_edge("call_llm_2", "aggregator")
+parallel_builder.add_edge("call_llm_3", "aggregator")
+parallel_builder.add_edge("aggregator", END)
+parallel_workflow = parallel_builder.compile()
+
+# Show workflow
+display(Image(parallel_workflow.get_graph().draw_mermaid_png()))
+
+# Invoke
+state = parallel_workflow.invoke({"topic": "cats"})
+print(state["combined_output"])
