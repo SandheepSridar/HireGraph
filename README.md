@@ -2,10 +2,6 @@
 
 A LangGraph-based pipeline that checks how well a candidate's resume matches a specific job posting, and tells them what's missing.
 
-## Why
-
-Built to close a skill gap from Sandheep's own job search — learning multi-agent orchestration (LangGraph), structured LLM outputs, and hybrid scoring/ranking design by building a tool he can actually use in that job search.
-
 ## Planned flow (MVP)
 
 1. **Input:** a candidate profile (resume text, plus `location` and approximate `role` as filters) and a link to one job description.
